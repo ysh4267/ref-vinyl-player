@@ -9,6 +9,7 @@ const PIVOT = { x: 341, y: 23 };
 const RING_R = 590;
 const SPIN = 40.25; // degrees per second, clockwise
 const LINE_STEP = 13; // angle between lines
+const SEEK = { from: -51.5, span: 103 }; // progress range on the outer arc, in degrees
 
 // Color per note name (sampled from the video)
 const COLORS = {
@@ -461,9 +462,16 @@ function buildDeck() {
     TICKS.push({ a: (a * Math.PI) / 180, deg: a, line, len: 10 });
   }
   ARM.progress = el('path', { fill: 'none', stroke: '#e2553f', 'stroke-width': '1.8', 'stroke-linecap': 'round' }, ringG);
-  ARM.marker = el('g', {}, ringG);
-  el('circle', { r: '9', fill: 'rgb(15 11 10 / 0.9)', stroke: '#e2553f', 'stroke-width': '2' }, ARM.marker);
-  el('circle', { r: '3.2', fill: '#e2553f' }, ARM.marker);
+  // Wide invisible band over the progress range of the arc: drag it to move the playback position.
+  ARM.seek = el('path', {
+    d: arc(605, (SEEK.from * Math.PI) / 180, ((SEEK.from + SEEK.span) * Math.PI) / 180),
+    class: 'seek', fill: 'none', stroke: 'transparent', 'stroke-width': '72', 'stroke-linecap': 'round',
+    tabindex: '0', role: 'slider', 'aria-label': 'Playback position', 'aria-valuemin': '0', 'aria-valuemax': String(Math.round(TOTAL)), 'aria-valuenow': '0',
+  }, ringG);
+  ARM.marker = el('g', { class: 'marker' }, ringG);
+  const knob = el('g', { class: 'knob' }, ARM.marker);
+  el('circle', { r: '9', fill: 'rgb(15 11 10 / 0.9)', stroke: '#e2553f', 'stroke-width': '2' }, knob);
+  el('circle', { r: '3.2', fill: '#e2553f' }, knob);
 
   // tonearm base (pivot)
   const base = el('g', {}, deck);
@@ -511,8 +519,8 @@ function setArm(angle) {
 
 function setRing(progress, level, time, shown) {
   ARM.marker.style.display = shown ? '' : 'none';
-  const a0 = (-51.5 * Math.PI) / 180;
-  const a1 = a0 + ((103 * Math.PI) / 180) * progress;
+  const a0 = (SEEK.from * Math.PI) / 180;
+  const a1 = a0 + ((SEEK.span * Math.PI) / 180) * progress;
   ARM.progress.setAttribute('d', shown && progress > 0.001 ? ARM.arc(RING_R, a0, a1) : '');
   ARM.marker.setAttribute('transform', `translate(${(CENTER.x + RING_R * Math.cos(a1)).toFixed(2)} ${(CENTER.y + RING_R * Math.sin(a1)).toFixed(2)})`);
   for (const t of TICKS) {
@@ -594,6 +602,8 @@ const state = {
   wheelAt: -1,
   level: 0,
   lastFrame: null,
+  dragging: false, // moving the playback position by hand on the ring
+  loop: false,
 };
 
 function currentIndex(t) {
@@ -619,7 +629,11 @@ function setPlaying(on) {
 }
 
 function seek(t) {
-  state.t = clamp(t, 0, TOTAL);
+  const before = state.t;
+  state.t = clamp(t, 0, TOTAL - 0.05);
+  // Scrubbing by hand turns the record with it, like pushing the platter.
+  if (state.dragging) state.spin = (state.spin + (state.t - before) * SPIN + 360) % 360;
+  sound.resync();
   const li = lineAt(state.t);
   state.wheelFrom = state.wheelPos;
   state.wheelTo = li;
@@ -630,16 +644,14 @@ function render(now) {
   const dt = state.lastFrame === null ? 0 : Math.min((now - state.lastFrame) / 1000, 0.05);
   state.lastFrame = now;
 
-  if (state.playing && !state.frozen) {
+  if (state.playing && !state.frozen && !state.dragging) {
     state.t += dt;
     if (state.t >= TOTAL) {
-      if (demoMode) {
-        state.t = 0;
-      } else {
-        state.t = 0;
-        setPlaying(false);
-      }
+      state.t = 0;
+      sound.resync();
+      if (!demoMode && !state.loop) setPlaying(false);
     }
+    sound.tick();
   }
   const t = state.t;
 
@@ -748,12 +760,183 @@ function render(now) {
   }
 
   nowEl.textContent = fmt(t);
+  const sec = String(Math.floor(t));
+  if (ARM.seek.getAttribute('aria-valuenow') !== sec) {
+    ARM.seek.setAttribute('aria-valuenow', sec);
+    ARM.seek.setAttribute('aria-valuetext', `${fmt(t)} of ${fmt(TOTAL)}`);
+  }
   requestAnimationFrame(render);
 }
+
+/* ------------------------------------------------------------- sound */
+
+// The notes are synthesized with Web Audio: a cowbell-like lead (two detuned squares through a band-pass) over a
+// soft triangle, a kick every four steps, a light hat on every step and a sub note at the start of each line.
+// Sound starts only after the play button is pressed (browsers need a click first); ?demo stays silent.
+const sound = (() => {
+  let ctx = null;
+  let master = null;
+  let bus = null;
+  let noise = null;
+  let next = 0;
+  let volume = 0.7;
+  let muted = false;
+  const voices = new Set();
+
+  const SEMI = { c: 0, db: 1, d: 2, eb: 3, e: 4, f: 5, gb: 6, g: 7, ab: 8, a: 9, bb: 10, b: 11 };
+  const freq = (name) => {
+    const m = name.match(/^([a-g]b?)(\d)$/);
+    const midi = 12 * (Number(m[2]) + 1) + SEMI[m[1]];
+    return 440 * 2 ** ((midi - 69) / 12);
+  };
+
+  function init() {
+    if (ctx) {
+      if (ctx.state === 'suspended') ctx.resume();
+      return;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = muted ? 0 : volume;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -14;
+    comp.ratio.value = 4;
+    bus = ctx.createGain();
+    bus.gain.value = 0.55;
+    bus.connect(comp);
+    comp.connect(master);
+    master.connect(ctx.destination);
+    noise = ctx.createBuffer(1, ctx.sampleRate * 0.2, ctx.sampleRate);
+    const data = noise.getChannelData(0);
+    for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
+    resync();
+  }
+
+  function keep(node, end) {
+    voices.add(node);
+    node.onended = () => voices.delete(node);
+    node.stop(end);
+  }
+
+  function lead(f, when, len) {
+    const out = ctx.createGain();
+    out.gain.setValueAtTime(0.0001, when);
+    out.gain.exponentialRampToValueAtTime(1, when + 0.006);
+    out.gain.exponentialRampToValueAtTime(0.001, when + len);
+    out.connect(bus);
+    const band = ctx.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.value = Math.min(9000, f * 2.6);
+    band.Q.value = 1.3;
+    const bell = ctx.createGain();
+    bell.gain.value = 0.2;
+    band.connect(bell);
+    bell.connect(out);
+    const body = ctx.createGain();
+    body.gain.value = 0.32;
+    body.connect(out);
+    const parts = [['square', f, band], ['square', f * 1.4983, band], ['triangle', f, body]];
+    for (const [type, hz, to] of parts) {
+      const o = ctx.createOscillator();
+      o.type = type;
+      o.frequency.value = hz;
+      o.connect(to);
+      o.start(when);
+      keep(o, when + len + 0.05);
+    }
+  }
+
+  function kick(when) {
+    const o = ctx.createOscillator();
+    o.frequency.setValueAtTime(140, when);
+    o.frequency.exponentialRampToValueAtTime(42, when + 0.14);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.9, when);
+    g.gain.exponentialRampToValueAtTime(0.001, when + 0.38);
+    o.connect(g);
+    g.connect(bus);
+    o.start(when);
+    keep(o, when + 0.4);
+  }
+
+  function hat(when, amp) {
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 7000;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(amp, when);
+    g.gain.exponentialRampToValueAtTime(0.001, when + 0.05);
+    src.connect(hp);
+    hp.connect(g);
+    g.connect(bus);
+    src.start(when);
+    keep(src, when + 0.06);
+  }
+
+  function sub(f, when, len) {
+    const o = ctx.createOscillator();
+    o.frequency.value = f;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.42, when + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, when + len);
+    o.connect(g);
+    g.connect(bus);
+    o.start(when);
+    keep(o, when + len + 0.05);
+  }
+
+  // Next token to schedule: the first one at or after the current song time.
+  function resync() {
+    for (const v of voices) {
+      try { v.stop(); } catch (e) { /* already stopped */ }
+    }
+    voices.clear();
+    next = allTokens.findIndex((tok) => tok.at >= state.t - 0.001);
+    if (next < 0) next = allTokens.length;
+  }
+
+  // Called every frame while playing: schedule what starts within the next 0.12 s.
+  function tick() {
+    if (!ctx || ctx.state !== 'running') return;
+    const ahead = state.t + 0.12;
+    while (next < allTokens.length && allTokens[next].at < ahead) {
+      const tok = allTokens[next];
+      const when = ctx.currentTime + Math.max(0, tok.at - state.t);
+      const after = allTokens[next + 1];
+      const dur = after && after.line === tok.line ? after.at - tok.at : 0.5;
+      if (tok.k % 4 === 0) kick(when);
+      hat(when, tok.k % 2 ? 0.035 : 0.06);
+      if (tok.pitch) {
+        const f = freq(tok.name);
+        lead(f, when, Math.max(0.14, Math.min(0.5, dur * 1.3)));
+        if (tok.k === 0) sub(f / 4, when, Math.min(1.6, lines[tok.line].dur));
+      }
+      next += 1;
+    }
+  }
+
+  function setVolume(v) {
+    volume = v;
+    if (master) master.gain.setTargetAtTime(muted ? 0 : volume, ctx.currentTime, 0.02);
+  }
+
+  function setMuted(on) {
+    muted = on;
+    setVolume(volume);
+  }
+
+  return { init, tick, resync, setVolume, setMuted, halt: resync, get muted() { return muted; }, get volume() { return volume; } };
+})();
 
 /* ------------------------------------------------------------- layout and input */
 
 let stageScale = 1;
+let sceneY = 0;
 // The record and note lines hug the left edge and fill the window height, as long as the end of the middle line (x=1800) stays inside.
 // Title, transport and time stick to the window edges and do not shrink too far, so they stay readable on small screens.
 function fitStage() {
@@ -761,6 +944,7 @@ function fitStage() {
   const H = window.innerHeight;
   stageScale = Math.min(H / STAGE.h, W / 1800);
   const y = (H - STAGE.h * stageScale) / 2;
+  sceneY = y;
   scene.style.transform = `translate(0px, ${y.toFixed(1)}px) scale(${stageScale})`;
   stage.style.setProperty('--s', String(stageScale));
   stage.style.setProperty('--u', String(Math.min(1.25, Math.max(stageScale, 0.6))));
@@ -769,7 +953,9 @@ function fitStage() {
 
 playButton.addEventListener('click', () => {
   if (!state.playing && state.t >= TOTAL) state.t = 0;
+  if (!demoMode) sound.init();
   setPlaying(!state.playing);
+  sound.resync();
 });
 document.getElementById('prev').addEventListener('click', () => {
   const li = lineAt(state.t);
@@ -781,6 +967,70 @@ document.getElementById('next').addEventListener('click', () => {
   if (li + 1 < lines.length) seek(lines[li + 1].start + 0.001);
 });
 window.addEventListener('resize', fitStage);
+
+// Drag along the outer ring to move the playback position by hand.
+function progressAt(event) {
+  const x = event.clientX / stageScale;
+  const y = (event.clientY - sceneY) / stageScale;
+  const deg = (Math.atan2(y - CENTER.y, x - CENTER.x) * 180) / Math.PI;
+  return clamp((deg - SEEK.from) / SEEK.span, 0, 1);
+}
+function endDrag() {
+  if (!state.dragging) return;
+  state.dragging = false;
+  deck.classList.remove('dragging');
+  sound.resync();
+}
+function wireSeek() {
+  ARM.seek.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    try { ARM.seek.setPointerCapture(event.pointerId); } catch (e) { /* synthetic pointer */ }
+    state.dragging = true;
+    deck.classList.add('dragging');
+    seek(progressAt(event) * TOTAL);
+  });
+  ARM.seek.addEventListener('pointermove', (event) => {
+    if (state.dragging) seek(progressAt(event) * TOTAL);
+  });
+  ARM.seek.addEventListener('pointerup', endDrag);
+  ARM.seek.addEventListener('pointercancel', endDrag);
+  ARM.seek.addEventListener('keydown', (event) => {
+    const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[event.key];
+    if (step) {
+      event.preventDefault();
+      seek(state.t + step);
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      seek(event.key === 'Home' ? 0 : TOTAL);
+    }
+  });
+}
+
+// Volume, mute and loop in the bottom-right corner.
+const volumeInput = document.getElementById('volume');
+const muteButton = document.getElementById('mute');
+const loopButton = document.getElementById('loop');
+function showVolume() {
+  const v = sound.muted ? 0 : Number(volumeInput.value);
+  volumeInput.style.setProperty('--v', `${v}%`);
+  muteButton.classList.toggle('muted', sound.muted || Number(volumeInput.value) === 0);
+  muteButton.setAttribute('aria-label', sound.muted ? 'Unmute' : 'Mute');
+}
+volumeInput.addEventListener('input', () => {
+  if (sound.muted) sound.setMuted(false);
+  sound.setVolume(Number(volumeInput.value) / 100);
+  showVolume();
+});
+muteButton.addEventListener('click', () => {
+  sound.setMuted(!sound.muted);
+  showVolume();
+});
+loopButton.addEventListener('click', () => {
+  state.loop = !state.loop;
+  loopButton.setAttribute('aria-pressed', String(state.loop));
+});
+showVolume();
 
 const demoMode = new URLSearchParams(location.search).has('demo');
 
@@ -800,9 +1050,11 @@ window.__page = {
     if (spin !== null) state.spin = spin;
     state.level = 0.6;
   },
+  status: () => ({ t: state.t, playing: state.playing, dragging: state.dragging, loop: state.loop, muted: sound.muted, volume: sound.volume }),
 };
 
 buildDeck();
+wireSeek();
 fitStage();
 setArm(state.arm);
 document.fonts.ready.then(() => {

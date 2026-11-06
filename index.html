@@ -31,6 +31,11 @@
       <button id="play" type="button" aria-label="Play"><svg viewBox="0 0 24 24"><path class="fill icon-play" d="M9 6.8v10.4L17.2 12z" /><g class="icon-pause"><path d="M9.6 7.2v9.6" /><path d="M14.4 7.2v9.6" /></g></svg></button>
       <button id="next" type="button" aria-label="Next line"><svg viewBox="0 0 24 24"><path d="M17 6.5v11" /><path d="M6.5 6.6v10.8L14.4 12z" class="fill" /></svg></button>
     </nav>
+    <div class="extras" aria-label="Sound">
+      <button id="loop" type="button" aria-label="Loop" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="m17 2.5 3.5 3.5L17 9.5" /><path d="M3.5 11.5V10a4 4 0 0 1 4-4h13" /><path d="M7 21.5 3.5 18 7 14.5" /><path d="M20.5 12.5V14a4 4 0 0 1-4 4h-13" /></svg></button>
+      <button id="mute" type="button" aria-label="Mute"><svg viewBox="0 0 24 24"><path class="fill" d="M11 5 6.2 9H3v6h3.2l4.8 4z" /><path class="wave" d="M15.5 8.5a5 5 0 0 1 0 7" /><path class="wave" d="M18.5 5.5a9.2 9.2 0 0 1 0 13" /><path class="cross" d="m16 9.5 5 5m0-5-5 5" /></svg></button>
+      <input id="volume" type="range" min="0" max="100" step="1" value="70" aria-label="Volume">
+    </div>
     <p class="time"><span id="now">0:00</span><span class="total"> / 0:17</span></p>
   </div>
 </body>

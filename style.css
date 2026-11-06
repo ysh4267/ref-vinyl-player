@@ -256,3 +256,104 @@ body {
   pointer-events: none;
   will-change: transform;
 }
+
+/* Outer ring: drag along it to move the playback position. */
+#deck .seek {
+  pointer-events: stroke;
+  cursor: grab;
+  outline: none;
+}
+
+#deck.dragging .seek { cursor: grabbing; }
+
+#deck .knob {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 0.15s ease;
+}
+
+#deck .seek:hover ~ .marker .knob,
+#deck .seek:focus-visible ~ .marker .knob,
+#deck.dragging .marker .knob {
+  transform: scale(1.35);
+}
+
+#deck .seek:focus-visible ~ .marker circle:first-child { stroke: #ff8a6e; }
+
+/* Volume, mute and loop in the bottom-right corner, above the time. */
+.extras {
+  position: absolute;
+  right: calc(70px * var(--u));
+  bottom: calc(96px * var(--u));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transform: scale(var(--u));
+  transform-origin: bottom right;
+}
+
+.extras button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: #7b7977;
+  cursor: pointer;
+}
+
+.extras button:hover { color: #b9b6b4; }
+.extras button:focus-visible { outline: 1.5px solid #6b6563; outline-offset: 1px; }
+
+.extras svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.extras svg .fill { fill: currentColor; stroke-width: 1.2; }
+#loop[aria-pressed="true"] { color: #e2553f; }
+#mute .cross { display: none; }
+#mute.muted .cross { display: inline; }
+#mute.muted .wave { display: none; }
+
+#volume {
+  --v: 70%;
+  width: 104px;
+  height: 20px;
+  margin: 0 0 0 4px;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+#volume:focus-visible { outline: 1.5px solid #6b6563; outline-offset: 3px; border-radius: 4px; }
+
+#volume::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(to right, #d9d5d3 var(--v), #3a3534 var(--v));
+}
+
+#volume::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+  border: 0;
+  border-radius: 50%;
+  background: #f2efee;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+#volume::-moz-range-track { height: 3px; border-radius: 2px; background: #3a3534; }
+#volume::-moz-range-progress { height: 3px; border-radius: 2px; background: #d9d5d3; }
+#volume::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: #f2efee; }
