@@ -92,7 +92,7 @@ const allTokens = lines.flatMap((line) => line.tokens.map((tok, k) => ({ ...tok,
 
 /* ------------------------------------------------------------- record */
 
-// Value noise and fbm. The pattern is generated once.
+// Value noise for the grain on the label paper.
 function makeNoise(seed) {
   let s = seed >>> 0;
   const rand = () => {
@@ -123,127 +123,6 @@ function makeNoise(seed) {
     const d = at(xi + 1, yi + 1);
     return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
   };
-}
-
-function fbm(noise, x, y) {
-  let v = 0;
-  let amp = 0.5;
-  let f = 1;
-  for (let o = 0; o < 4; o += 1) {
-    v += amp * noise(x * f, y * f);
-    f *= 2.03;
-    amp *= 0.5;
-  }
-  return v / 0.9375;
-}
-
-// Pink base with violet and indigo swirls and orange streaks, built on a polar grid and smeared around the circle
-// so it looks motion-blurred like the spinning record in the video.
-function makeTexture() {
-  const NR = 190;
-  const NT = 1024;
-  const R0 = 200;
-  const R1 = 566;
-  const noise = makeNoise(616);
-  const field = new Float32Array(NR * NT * 3);
-  const PINK = [228, 60, 140];
-  const DEEP = [190, 44, 120];
-  const LIGHT = [246, 112, 178];
-  const VIOLET = [104, 56, 170];
-  const INDIGO = [70, 58, 205];
-  const ORANGE = [243, 137, 58];
-  // Build two noise fields (v: violet areas, w: orange areas), then set thresholds by percentile so the colors spread evenly.
-  const V = new Float32Array(NR * NT);
-  const Wf = new Float32Array(NR * NT);
-  for (let i = 0; i < NR; i += 1) {
-    const r = R0 + ((R1 - R0) * i) / (NR - 1);
-    for (let j = 0; j < NT; j += 1) {
-      const th = (j / NT) * Math.PI * 2;
-      const x = (Math.cos(th) * r) / 250;
-      const y = (Math.sin(th) * r) / 250;
-      const qx = fbm(noise, x + 1.7, y + 9.2);
-      const qy = fbm(noise, x + 8.3, y + 2.8);
-      V[i * NT + j] = fbm(noise, x + 4.2 * qx, y + 4.2 * qy);
-      Wf[i * NT + j] = fbm(noise, x * 1.3 + 3.1 * qy + 5.1, y * 1.3 + 3.1 * qx + 1.3);
-    }
-  }
-  const pct = (arr, q) => {
-    const sorted = Float32Array.from(arr).sort();
-    return sorted[Math.floor(q * (sorted.length - 1))];
-  };
-  const v20 = pct(V, 0.2);
-  const v40 = pct(V, 0.4);
-  const v66 = pct(V, 0.66);
-  const v78 = pct(V, 0.78);
-  const v90 = pct(V, 0.9);
-  const w50 = pct(Wf, 0.5);
-  const w82 = pct(Wf, 0.82);
-  const w93 = pct(Wf, 0.93);
-  for (let n = 0; n < NR * NT; n += 1) {
-    const v = V[n];
-    const w = Wf[n];
-    let c = mixRGB(PINK, DEEP, smooth(w50, w82, w) * 0.7);
-    c = mixRGB(c, LIGHT, smooth(v40, v20, v) * 0.6);
-    const blue = smooth(v66, v78, v);
-    c = mixRGB(c, mixRGB(VIOLET, INDIGO, smooth(v78, v90, v)), blue * 0.84);
-    const edge = Math.exp(-(((v - v66) / ((v78 - v66) * 0.12)) ** 2));
-    c = mixRGB(c, [70, 70, 220], edge * 0.4);
-    const orange = smooth(w82, w93, w) * (1 - blue);
-    c = mixRGB(c, ORANGE, orange * 0.85);
-    field[n * 3] = c[0];
-    field[n * 3 + 1] = c[1];
-    field[n * 3 + 2] = c[2];
-  }
-  // Smear around the circle (two box blurs)
-  const blurred = new Float32Array(field.length);
-  const K = 10;
-  for (let pass = 0; pass < 2; pass += 1) {
-    const src = pass ? blurred.slice() : field;
-    for (let i = 0; i < NR; i += 1) {
-      for (let ch = 0; ch < 3; ch += 1) {
-        let acc = 0;
-        for (let k = -K; k <= K; k += 1) acc += src[(i * NT + ((k + NT) % NT)) * 3 + ch];
-        for (let j = 0; j < NT; j += 1) {
-          blurred[(i * NT + j) * 3 + ch] = acc / (2 * K + 1);
-          acc += src[(i * NT + ((j + K + 1) % NT)) * 3 + ch] - src[(i * NT + ((j - K + NT) % NT)) * 3 + ch];
-        }
-      }
-    }
-  }
-  // Polar grid → image (diameter 1132, 1 unit = 1 pixel)
-  const size = 1132;
-  const half = size / 2;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const c2 = canvas.getContext('2d');
-  const img = c2.createImageData(size, size);
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const dx = x + 0.5 - half;
-      const dy = y + 0.5 - half;
-      const r = Math.hypot(dx, dy);
-      if (r > 566) continue;
-      const fi = clamp(((r - R0) / (R1 - R0)) * (NR - 1), 0, NR - 1.001);
-      let th = Math.atan2(dy, dx);
-      if (th < 0) th += Math.PI * 2;
-      const fj = (th / (Math.PI * 2)) * NT;
-      const i0 = Math.floor(fi);
-      const j0 = Math.floor(fj) % NT;
-      const j1 = (j0 + 1) % NT;
-      const ti = fi - i0;
-      const tj = fj - Math.floor(fj);
-      const o = (y * size + x) * 4;
-      for (let ch = 0; ch < 3; ch += 1) {
-        const a = blurred[(i0 * NT + j0) * 3 + ch] * (1 - tj) + blurred[(i0 * NT + j1) * 3 + ch] * tj;
-        const b = blurred[((i0 + 1) * NT + j0) * 3 + ch] * (1 - tj) + blurred[((i0 + 1) * NT + j1) * 3 + ch] * tj;
-        img.data[o + ch] = a * (1 - ti) + b * ti;
-      }
-      img.data[o + 3] = 255;
-    }
-  }
-  c2.putImageData(img, 0, 0);
-  return canvas;
 }
 
 // Label: text on pink, lavender and peach paper, drawn once at 2x resolution.
@@ -357,7 +236,12 @@ function makeLabel() {
   return canvas;
 }
 
-let texture = null;
+// The record surface is a picture (assets/record.webp); it turns with the label.
+const record = new Image();
+let recordReady = false;
+record.decoding = 'async';
+record.onload = () => { recordReady = true; };
+record.src = 'assets/record.webp';
 let label = null;
 let discView = { k: 1 };
 
@@ -388,7 +272,12 @@ function drawDisc(angle) {
   c.arc(0, 0, DISC_R, 0, Math.PI * 2);
   c.clip();
   c.rotate((angle * Math.PI) / 180);
-  if (texture) c.drawImage(texture, -566, -566);
+  if (recordReady) {
+    c.drawImage(record, -DISC_R, -DISC_R, DISC_R * 2, DISC_R * 2);
+  } else {
+    c.fillStyle = '#c93a86';
+    c.fillRect(-DISC_R, -DISC_R, DISC_R * 2, DISC_R * 2);
+  }
   c.restore();
   // slightly darker toward the edge
   const fall = c.createRadialGradient(0, 0, 210, 0, 0, DISC_R);
@@ -399,21 +288,6 @@ function drawDisc(angle) {
   c.beginPath();
   c.arc(0, 0, DISC_R, 0, Math.PI * 2);
   c.fill();
-  // grooves: fine lines and a few bright rings
-  c.lineWidth = 0.6;
-  for (let r = 214; r < DISC_R - 4; r += 3.1) {
-    c.strokeStyle = `rgb(255 255 255 / ${0.018 + 0.012 * Math.sin(r * 0.7)})`;
-    c.beginPath();
-    c.arc(0, 0, r, 0, Math.PI * 2);
-    c.stroke();
-  }
-  c.lineWidth = 2.6;
-  for (const r of [279, 350.5, 423, 495]) {
-    c.strokeStyle = 'rgb(255 190 225 / 0.075)';
-    c.beginPath();
-    c.arc(0, 0, r, 0, Math.PI * 2);
-    c.stroke();
-  }
   // edge
   c.lineWidth = 5;
   c.strokeStyle = 'rgb(255 200 230 / 0.07)';
@@ -435,18 +309,10 @@ const ARM = {};
 const TICKS = [];
 function buildDeck() {
   const defs = el('defs', {}, deck);
-  const tube = el('linearGradient', { id: 'tube', x1: '0', x2: '1', y1: '0', y2: '0' }, defs);
-  [[0, '#4a4e53'], [0.16, '#c3c7cc'], [0.34, '#ffffff'], [0.5, '#eef0f2'], [0.74, '#9a9ea3'], [1, '#3a3d42']].forEach(([o, c]) => el('stop', { offset: o, 'stop-color': c }, tube));
-  const collar = el('linearGradient', { id: 'collar', x1: '0', x2: '1', y1: '0', y2: '0' }, defs);
-  [[0, '#55595e'], [0.3, '#e9ecef'], [0.55, '#ffffff'], [0.8, '#8a8e93'], [1, '#3a3d41']].forEach(([o, c]) => el('stop', { offset: o, 'stop-color': c }, collar));
-  const plate = el('radialGradient', { id: 'plate', cx: '0.45', cy: '0.4', r: '0.6' }, defs);
-  [[0, '#c9cdd1'], [0.6, '#9a9fa5'], [1, '#5a5e63']].forEach(([o, c]) => el('stop', { offset: o, 'stop-color': c }, plate));
-  const cap = el('radialGradient', { id: 'cap', cx: '0.4', cy: '0.35', r: '0.7' }, defs);
-  [[0, '#8e9398'], [0.5, '#5b5f64'], [1, '#2a2c30']].forEach(([o, c]) => el('stop', { offset: o, 'stop-color': c }, cap));
-  const shell = el('linearGradient', { id: 'shell', x1: '0', x2: '1', y1: '0', y2: '0' }, defs);
-  [[0, '#121214'], [0.45, '#2b2b2f'], [1, '#0d0d0f']].forEach(([o, c]) => el('stop', { offset: o, 'stop-color': c }, shell));
   const soft = el('filter', { id: 'soft', x: '-50%', y: '-50%', width: '200%', height: '200%' }, defs);
   el('feGaussianBlur', { stdDeviation: '6' }, soft);
+  const lift = el('filter', { id: 'lift', x: '-30%', y: '-10%', width: '160%', height: '120%' }, defs);
+  el('feDropShadow', { dx: '7', dy: '9', stdDeviation: '6', 'flood-color': '#000', 'flood-opacity': '0.55' }, lift);
 
   // tick ring
   const ringG = el('g', {}, deck);
@@ -473,44 +339,13 @@ function buildDeck() {
   el('circle', { r: '9', fill: 'rgb(15 11 10 / 0.9)', stroke: '#e2553f', 'stroke-width': '2' }, knob);
   el('circle', { r: '3.2', fill: '#e2553f' }, knob);
 
-  // tonearm base (pivot)
+  // Tonearm base and arm are pictures (assets/). The arm picture turns around the pivot;
+  // in it the pivot sits at (50.8, 63) and the stylus 690 px below, pointing straight down at 0 degrees.
   const base = el('g', {}, deck);
   el('circle', { cx: PIVOT.x, cy: PIVOT.y, r: '86', fill: 'rgb(0 0 0 / 0.55)', filter: 'url(#soft)' }, base);
-  el('circle', { cx: PIVOT.x, cy: PIVOT.y, r: '83', fill: 'url(#plate)', stroke: '#3a3d41', 'stroke-width': '1.5' }, base);
-  el('circle', { cx: PIVOT.x, cy: PIVOT.y, r: '66', fill: '#2a2c30', stroke: '#6d7277', 'stroke-width': '1.2' }, base);
-  el('circle', { cx: PIVOT.x, cy: PIVOT.y, r: '57', fill: 'url(#cap)' }, base);
-  for (let k = 0; k < 36; k += 1) {
-    const a = (k / 36) * Math.PI * 2;
-    el('line', {
-      x1: PIVOT.x + Math.cos(a) * 8, y1: PIVOT.y + Math.sin(a) * 8, x2: PIVOT.x + Math.cos(a) * 55, y2: PIVOT.y + Math.sin(a) * 55,
-      stroke: k % 2 ? 'rgb(255 255 255 / 0.07)' : 'rgb(0 0 0 / 0.08)', 'stroke-width': '3',
-    }, base);
-  }
-  for (const a of [0.55, 2.2, 3.9, 5.4]) {
-    el('circle', { cx: PIVOT.x + Math.cos(a) * 75, cy: PIVOT.y + Math.sin(a) * 75, r: '3.4', fill: '#3b3e42', stroke: '#c9ccd0', 'stroke-width': '0.8' }, base);
-  }
-
-  // arm (turns around the pivot); 0 degrees points straight down
+  el('image', { href: 'assets/tonearm-base.webp', x: PIVOT.x - 85, y: PIVOT.y - 85, width: '170', height: '170' }, base);
   ARM.g = el('g', {}, deck);
-  const g = ARM.g;
-  el('rect', { x: PIVOT.x - 13, y: PIVOT.y - 6, width: '26', height: '46', rx: '5', fill: 'url(#collar)' }, g);
-  el('rect', { x: PIVOT.x - 10.5, y: PIVOT.y + 20, width: '21', height: '525', rx: '10', fill: 'url(#tube)' }, g);
-  el('rect', { x: PIVOT.x - 13.5, y: PIVOT.y + 508, width: '27', height: '46', rx: '6', fill: 'url(#collar)' }, g);
-  el('line', { x1: PIVOT.x - 4, y1: PIVOT.y + 140, x2: PIVOT.x - 4, y2: PIVOT.y + 150, stroke: '#333', 'stroke-width': '3', 'stroke-linecap': 'round' }, g);
-  // headshell
-  const top = PIVOT.y + 548;
-  const hs = el('g', { transform: `rotate(-4 ${PIVOT.x} ${top})` }, g);
-  el('path', {
-    d: `M${PIVOT.x - 17} ${top} L${PIVOT.x + 17} ${top} L${PIVOT.x + 24} ${top + 70} L${PIVOT.x + 94} ${top + 100} L${PIVOT.x + 93} ${top + 106} L${PIVOT.x + 23} ${top + 86} L${PIVOT.x + 26} ${top + 142} L${PIVOT.x - 24} ${top + 142} Z`,
-    fill: 'url(#shell)', stroke: '#050506', 'stroke-width': '1',
-  }, hs);
-  el('rect', { x: PIVOT.x - 20, y: top + 112, width: '40', height: '38', rx: '3', fill: '#141416' }, hs);
-  el('rect', { x: PIVOT.x - 2.2, y: top + 120, width: '4.4', height: '24', fill: '#e6772e' }, hs);
-  for (const dx of [-12, 12]) {
-    el('circle', { cx: PIVOT.x + dx, cy: top + 104, r: '5.4', fill: '#d4d7da', stroke: '#4a4d51', 'stroke-width': '1.2' }, hs);
-    el('circle', { cx: PIVOT.x + dx - 1.3, cy: top + 102.6, r: '1.7', fill: '#ffffff' }, hs);
-  }
-  el('path', { d: `M${PIVOT.x + 8} ${top + 22} q 12 6 9 24`, fill: 'none', stroke: '#e0743a', 'stroke-width': '1.3' }, hs);
+  el('image', { href: 'assets/tonearm.webp', x: PIVOT.x - 50.8, y: PIVOT.y - 63, width: '149.5', height: '774', filter: 'url(#lift)' }, ARM.g);
 }
 
 function setArm(angle) {
@@ -1060,9 +895,5 @@ setArm(state.arm);
 document.fonts.ready.then(() => {
   label = makeLabel();
 });
-// Generating the pattern is heavy, so it waits until after the first frame.
-requestAnimationFrame(() => setTimeout(() => {
-  texture = makeTexture();
-}, 0));
 if (demoMode) setPlaying(true);
 requestAnimationFrame(render);

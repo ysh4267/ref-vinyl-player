@@ -19,7 +19,7 @@ Reference: [godly.design 616 video](https://cdn.godly.design/posts/616.mp4)
 
 - The video (1920x1198) was measured every 0.2s for the line order and tempo, the record speed (40 degrees per second), the tonearm angle, the angle between lines (13 degrees) and the note colors. Coordinates are video pixels.
 - The record and note lines hug the left edge and fill the window height; title, transport and time stick to the window edges.
-- The record pattern is noise-based pink, violet and orange swirls smeared around the circle, generated once. The label artwork and tonearm are redrawn in a similar style.
+- The record surface, tonearm and tonearm base are AI-generated pictures (`assets/`); the code turns the record and swings the arm around its pivot. The label is drawn in code.
 - Notes use JetBrains Mono; everything else uses Inter.
 - Sound is made with Web Audio in the page, with no audio files. It starts after the play button is pressed.
 - No build step: just `index.html`, `style.css` and `main.js`.
