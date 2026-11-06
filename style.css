@@ -1,0 +1,258 @@
+/* The record and note lines (#scene) stay in video pixels (1920x1198) and scale to the window height (--s).
+   Title, transport and time stick to the window edges and scale the same way (--u). main.js sets both. */
+:root {
+  --bg: #0f0b0a;
+  --muted: #797675;
+  --dim: #777574;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: var(--bg);
+  font-family: Inter, -apple-system, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: #fff;
+}
+
+#stage {
+  --s: 1;
+  --u: 1;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+#scene {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1920px;
+  height: 1198px;
+  transform-origin: 0 0;
+}
+
+/* Red glow around the record */
+.glow {
+  position: absolute;
+  left: -900px;
+  top: -302px;
+  width: 1804px;
+  height: 1804px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(110 26 56 / 0.3) 60%, rgb(64 16 32 / 0.13) 72%, rgb(15 11 10 / 0) 100%);
+  pointer-events: none;
+}
+
+#disc {
+  position: absolute;
+  left: -598px;
+  top: -2px;
+  width: 1200px;
+  height: 1200px;
+}
+
+#deck {
+  position: absolute;
+  inset: 0;
+  width: 1920px;
+  height: 1198px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* Wheel of note lines: each line turns around the record center (2, 598). */
+#wheel {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+
+.line {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: pre;
+  transform-origin: 2px 598px;
+  will-change: transform, opacity, filter;
+}
+
+.line .section {
+  position: absolute;
+  left: 725px;
+  top: 582px;
+  line-height: 32px;
+  font-size: 24px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: #e2553f;
+}
+
+.line .notes {
+  position: absolute;
+  left: 822px;
+  top: 568px;
+  line-height: 60px;
+  font-size: 50px;
+  font-weight: 500;
+  color: #4a4645;
+}
+
+.tok {
+  position: relative;
+  display: inline-block;
+}
+
+.tok.played { color: #f2efee; }
+
+.tok .box {
+  position: absolute;
+  left: -7px;
+  right: -7px;
+  top: 4px;
+  bottom: -4px;
+  border-radius: 9px;
+  opacity: 0;
+  z-index: -1;
+}
+
+.title {
+  position: absolute;
+  right: calc(76px * var(--u));
+  top: calc(60px * var(--u));
+  text-align: right;
+  transform: scale(var(--u));
+  transform-origin: top right;
+}
+
+.title p {
+  margin: 0;
+}
+
+.song {
+  font-size: 22.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 32px;
+  color: #fff;
+}
+
+.artist {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px !important;
+  font-size: 18.5px;
+  line-height: 26px;
+  color: var(--muted);
+}
+
+.mark {
+  width: 15px;
+  height: 15px;
+}
+
+.mark circle {
+  fill: none;
+  stroke: #d77468;
+  stroke-width: 1.9;
+}
+
+.mark .dot {
+  fill: #d77468;
+  stroke: none;
+}
+
+.transport {
+  position: absolute;
+  left: 50%;
+  bottom: calc(49px * var(--u));
+  transform: translateX(-50%) scale(var(--u));
+  transform-origin: bottom center;
+  display: flex;
+  align-items: center;
+  gap: 21px;
+}
+
+.transport button {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: #7b7977;
+  cursor: pointer;
+}
+
+.transport button:hover { color: #b9b6b4; }
+
+.transport svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.transport svg .fill {
+  fill: currentColor;
+  stroke-width: 1.2;
+}
+
+#play {
+  width: 56px;
+  height: 56px;
+  box-shadow: inset 0 0 0 1.5px #2e2b2a;
+}
+
+#play .icon-pause { display: none; }
+#play.playing .icon-pause { display: inline; }
+#play.playing .icon-play { display: none; }
+
+.time {
+  position: absolute;
+  right: calc(76px * var(--u));
+  bottom: calc(61px * var(--u));
+  margin: 0;
+  transform: scale(var(--u));
+  transform-origin: bottom right;
+  font-size: 19.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: #f2efee;
+}
+
+.time .total { color: var(--dim); }
+
+.line .tag {
+  font-size: 18px;
+  font-weight: 400;
+  color: #5c5857;
+  vertical-align: 0.6em;
+}
+
+/* Square that bounces over the notes */
+.square {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 22px;
+  height: 22px;
+  border: 4.5px solid #6e61d2;
+  border-radius: 3.5px;
+  pointer-events: none;
+  will-change: transform;
+}
